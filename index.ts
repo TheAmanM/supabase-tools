@@ -3,6 +3,10 @@ import { select } from "@inquirer/prompts";
 import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import figlet from "figlet";
+import { Chalk } from "chalk";
+
+const chalk = new Chalk({ level: 2 });
 
 // Load environment variables from .env file
 config();
@@ -20,7 +24,6 @@ interface EnvironmentConfig {
 function getAvailableEnvironments(): EnvironmentConfig[] {
   const envs = new Map<string, Partial<EnvironmentConfig>>();
 
-  // Extract keys, URLs, and Names from process.env
   for (const envKey in process.env) {
     const urlMatch = envKey.match(/^database\.(.+)\.url$/);
     const nameMatch = envKey.match(/^database\.(.+)\.name$/);
@@ -42,16 +45,16 @@ function getAvailableEnvironments(): EnvironmentConfig[] {
 
   const validEnvs: EnvironmentConfig[] = [];
 
-  // Validate extracted environments
   for (const [key, env] of envs.entries()) {
     if (!env.url) {
       console.warn(
-        `⚠️ Warning: Environment '${key}' is missing a URL. Skipping.`,
+        chalk.yellow(
+          `Warning: Environment '${key}' is missing a URL. Skipping.`,
+        ),
       );
       continue;
     }
 
-    // URL Format Validation
     try {
       const parsedUrl = new URL(env.url);
       if (
@@ -59,20 +62,24 @@ function getAvailableEnvironments(): EnvironmentConfig[] {
         parsedUrl.protocol !== "postgres:"
       ) {
         console.warn(
-          `⚠️ Warning: Environment '${key}' has an invalid protocol (${parsedUrl.protocol}). Must be postgres:// or postgresql://. Skipping.`,
+          chalk.yellow(
+            `Warning: Environment '${key}' has an invalid protocol (${parsedUrl.protocol}). Must be postgres:// or postgresql://. Skipping.`,
+          ),
         );
         continue;
       }
     } catch (e) {
       console.warn(
-        `⚠️ Warning: Environment '${key}' has a malformed/unparseable URL. Skipping.`,
+        chalk.yellow(
+          `Warning: Environment '${key}' has a malformed/unparseable URL. Skipping.`,
+        ),
       );
       continue;
     }
 
     validEnvs.push({
       key: env.key as string,
-      name: env.name || key, // Fallback to the env key (e.g., 'primary') if name is omitted
+      name: env.name || key,
       url: env.url,
     });
   }
@@ -87,21 +94,19 @@ function runPgDump(args: string[], dbUrl: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
 
-    // Safely extract the password from the validated URL to prevent pg_dump from hanging
     try {
       const parsedUrl = new URL(dbUrl);
       if (parsedUrl.password) {
         env.PGPASSWORD = parsedUrl.password;
       }
     } catch (e) {
-      // Should not hit this due to prior validation, but caught for safety
+      // Ignored: Caught by prior validation
     }
 
     const processSpawn = spawn("pg_dump", args, { env });
 
     processSpawn.stderr.on("data", (data) => {
-      // pg_dump writes its progress/warnings to stderr
-      console.warn(`pg_dump output: ${data.toString().trim()}`);
+      console.warn(chalk.dim(`pg_dump output: ${data.toString().trim()}`));
     });
 
     processSpawn.on("close", (code) => {
@@ -126,17 +131,46 @@ function runPgDump(args: string[], dbUrl: string): Promise<void> {
  * Main execution block
  */
 async function main() {
-  console.log("Scanning environment variables...\n");
+  const supabaseLines = figlet
+    .textSync("Supabase", {
+      horizontalLayout: "controlled smushing",
+    })
+    .split("\n");
+
+  const toolsLines = figlet
+    .textSync("Tools", {
+      horizontalLayout: "controlled smushing",
+    })
+    .split("\n");
+
+  // 2. Stitch them together row-by-row, applying the correct colors
+  const combinedArt = supabaseLines
+    .map((line, index) => {
+      const coloredSupabase = chalk.hex("#3ecf8e")(line);
+      // We use toolsLines[index] || "" as a fallback just in case the heights ever mismatch
+      const coloredTools = chalk.hex("#00311d")(toolsLines[index] || "");
+
+      // Combine the left and right sides with a space in between
+      return `${coloredSupabase} ${coloredTools}`;
+    })
+    .join("\n");
+
+  // 3. Print the final result
+  console.log(combinedArt);
+  console.log("\n");
+
+  console.log(chalk.blue("Scanning environment variables...\n"));
   const environments = getAvailableEnvironments();
 
   if (environments.length === 0) {
-    console.error("❌ No valid database environments found in .env file.");
+    console.error(
+      chalk.red("Error: No valid database environments found in .env file."),
+    );
     process.exit(1);
   }
 
-  // Initialization Output
   console.log(
-    `✅ ${environments.length} environment(s) loaded successfully.\n`,
+    chalk.green(`${environments.length} environment(s) loaded successfully.\n`),
   );
 
   // Interactive CLI to choose the environment
@@ -144,19 +178,24 @@ async function main() {
     message: "Select the database environment to backup:",
     choices: environments.map((env) => ({
       name: env.name,
-      value: env.key, // Value used to look up the selected environment later
+      value: env.key,
     })),
+    theme: {
+      icon: { cursor: chalk.cyan("◉") }, // Use a colored circle for the active selection
+    },
   });
 
   const targetEnv = environments.find((e) => e.key === selectedEnvKey);
 
   if (!targetEnv) {
-    console.error("❌ Failed to resolve the selected environment.");
+    console.error(
+      chalk.red("Error: Failed to resolve the selected environment."),
+    );
     process.exit(1);
   }
 
   // Prepare the output directory
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toISOString();
   const baseDir = path.join(process.cwd(), "artefacts", "downloads", today);
 
   if (!fs.existsSync(baseDir)) {
@@ -166,12 +205,12 @@ async function main() {
   const schemaOnlyPath = path.join(baseDir, `${targetEnv.key}-schema-only.sql`);
   const fullBackupPath = path.join(baseDir, `${targetEnv.key}-full-backup.sql`);
 
-  console.log(`\nStarting backup for: [${targetEnv.name}]`);
-  console.log(`Destination: ${baseDir}\n`);
+  console.log(chalk.magenta(`\nStarting backup for: [${targetEnv.name}]`));
+  console.log(chalk.gray(`Destination: ${baseDir}\n`));
 
   try {
     // Execute Schema-Only Dump
-    console.log("⏳ Running schema-only backup...");
+    console.log(chalk.cyan("Running schema-only backup..."));
     await runPgDump(
       [
         "--schema-only",
@@ -183,17 +222,21 @@ async function main() {
       ],
       targetEnv.url,
     );
-    console.log(`✅ Schema dump saved to: ${schemaOnlyPath}`);
+    console.log(chalk.green(`Schema dump saved to: ${schemaOnlyPath}`));
 
     // Execute Full Data + Schema Dump
-    console.log("\n⏳ Running full backup (schema + data + metadata)...");
+    console.log(
+      chalk.cyan("\nRunning full backup (schema + data + metadata)..."),
+    );
     await runPgDump(["-f", fullBackupPath, targetEnv.url], targetEnv.url);
-    console.log(`✅ Full backup saved to: ${fullBackupPath}`);
+    console.log(chalk.green(`Full backup saved to: ${fullBackupPath}`));
 
-    console.log("\n🎉 Backup completed successfully!");
+    console.log(chalk.bgGreen.black("\n Backup completed successfully! \n"));
   } catch (error) {
     console.error(
-      `\n❌ Backup failed: ${error instanceof Error ? error.message : String(error)}`,
+      chalk.red(
+        `\nBackup failed: ${error instanceof Error ? error.message : String(error)}`,
+      ),
     );
     process.exit(1);
   }
