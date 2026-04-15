@@ -9,7 +9,6 @@ import { Chalk } from "chalk";
 
 const chalk = new Chalk({ level: 2 });
 
-// Load environment variables from .env file
 config();
 
 interface EnvironmentConfig {
@@ -58,9 +57,6 @@ interface BackupOption {
 const DOWNLOADS_ROOT = path.join(process.cwd(), "artefacts", "downloads");
 const MANIFEST_FILE_NAME = "backup-manifest.json";
 
-/**
- * Parses Supabase project id from common connection URL formats.
- */
 function getSupabaseProjectId(dbUrl: string): string | undefined {
   try {
     const parsedUrl = new URL(dbUrl);
@@ -88,9 +84,6 @@ function getSupabaseProjectId(dbUrl: string): string | undefined {
   return undefined;
 }
 
-/**
- * Removes password from a Postgres URL before passing it to CLI tools.
- */
 function getSafeDbUrl(dbUrl: string): string {
   try {
     const parsedUrl = new URL(dbUrl);
@@ -101,9 +94,6 @@ function getSafeDbUrl(dbUrl: string): string {
   }
 }
 
-/**
- * Creates process env for PostgreSQL commands.
- */
 function getPgCommandEnv(dbUrl: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
 
@@ -112,17 +102,11 @@ function getPgCommandEnv(dbUrl: string): NodeJS.ProcessEnv {
     if (parsedUrl.password) {
       env.PGPASSWORD = parsedUrl.password;
     }
-  } catch (error) {
-    // Ignored: DB URL validation happens before command execution.
-  }
+  } catch (error) {}
 
   return env;
 }
 
-/**
- * Scans process.env to find all defined database environments
- * and validates the URL format.
- */
 function getAvailableEnvironments(): EnvironmentConfig[] {
   const envs = new Map<string, Partial<EnvironmentConfig>>();
 
@@ -189,9 +173,6 @@ function getAvailableEnvironments(): EnvironmentConfig[] {
   return validEnvs;
 }
 
-/**
- * Wraps the pg_dump CLI tool in a Promise-based spawn function
- */
 function runPgDump(args: string[], dbUrl: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const env = getPgCommandEnv(dbUrl);
@@ -220,9 +201,6 @@ function runPgDump(args: string[], dbUrl: string): Promise<void> {
   });
 }
 
-/**
- * Wraps the psql CLI tool in a Promise-based spawn function.
- */
 function runPsql(filePath: string, dbUrl: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const env = getPgCommandEnv(dbUrl);
@@ -259,9 +237,6 @@ function runPsql(filePath: string, dbUrl: string): Promise<void> {
   });
 }
 
-/**
- * Detects whether a SQL dump includes table data statements.
- */
 function backupHasData(filePath: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const stream = fs.createReadStream(filePath, { encoding: "utf8" });
@@ -446,7 +421,10 @@ function resolveSchemaOnlyPair(backup: BackupOption): string | null {
     return backup.filePath;
   }
 
-  if (backup.pairedSchemaOnlyPath && fs.existsSync(backup.pairedSchemaOnlyPath)) {
+  if (
+    backup.pairedSchemaOnlyPath &&
+    fs.existsSync(backup.pairedSchemaOnlyPath)
+  ) {
     return backup.pairedSchemaOnlyPath;
   }
 
@@ -527,8 +505,13 @@ async function getBackupOptions(
       }
     }
 
-    if (!sourceEnvironmentKey || sourceEnvironmentName === "Unknown Environment") {
-      const inferredMatch = fileName.match(/^(.*)-(schema-only|full-backup)\.sql$/);
+    if (
+      !sourceEnvironmentKey ||
+      sourceEnvironmentName === "Unknown Environment"
+    ) {
+      const inferredMatch = fileName.match(
+        /^(.*)-(schema-only|full-backup)\.sql$/,
+      );
 
       if (inferredMatch) {
         sourceEnvironmentKey = inferredMatch[1];
@@ -628,12 +611,21 @@ async function runBackupFlow(environments: EnvironmentConfig[]): Promise<void> {
 
   console.log(chalk.cyan("Running schema-only backup..."));
   await runPgDump(
-    ["--schema-only", "--clean", "--if-exists", "-f", schemaOnlyPath, safeDbUrl],
+    [
+      "--schema-only",
+      "--clean",
+      "--if-exists",
+      "-f",
+      schemaOnlyPath,
+      safeDbUrl,
+    ],
     targetEnv.url,
   );
   console.log(chalk.green(`Schema dump saved to: ${schemaOnlyPath}`));
 
-  console.log(chalk.cyan("\nRunning full backup (schema + data + metadata)..."));
+  console.log(
+    chalk.cyan("\nRunning full backup (schema + data + metadata)..."),
+  );
   await runPgDump(["-f", fullBackupPath, safeDbUrl], targetEnv.url);
   console.log(chalk.green(`Full backup saved to: ${fullBackupPath}`));
 
@@ -669,7 +661,9 @@ async function runBackupFlow(environments: EnvironmentConfig[]): Promise<void> {
   console.log(chalk.bgGreen.black("\n Backup completed successfully! \n"));
 }
 
-async function runRestoreFlow(environments: EnvironmentConfig[]): Promise<void> {
+async function runRestoreFlow(
+  environments: EnvironmentConfig[],
+): Promise<void> {
   const selectedEnvKey = await select({
     message: "Select the target environment to restore into:",
     choices: environments.map((env) => ({
@@ -709,7 +703,9 @@ async function runRestoreFlow(environments: EnvironmentConfig[]): Promise<void> 
     },
   });
 
-  const selectedBackup = backups.find((backup) => backup.id === selectedBackupId);
+  const selectedBackup = backups.find(
+    (backup) => backup.id === selectedBackupId,
+  );
 
   if (!selectedBackup) {
     throw new Error("Failed to resolve the selected backup.");
@@ -725,7 +721,8 @@ async function runRestoreFlow(environments: EnvironmentConfig[]): Promise<void> 
         {
           name: chalk.green("Apply schema and data"),
           value: "with-data",
-          description: "Restores database objects and table rows from the selected file.",
+          description:
+            "Restores database objects and table rows from the selected file.",
         },
         {
           name: chalk.yellow("Apply schema only"),
@@ -783,9 +780,6 @@ async function runRestoreFlow(environments: EnvironmentConfig[]): Promise<void> 
   console.log(chalk.bgGreen.black("\n Restore completed successfully! \n"));
 }
 
-/**
- * Main execution block
- */
 async function main() {
   const supabaseLines = figlet
     .textSync("Supabase", {
@@ -799,19 +793,15 @@ async function main() {
     })
     .split("\n");
 
-  // 2. Stitch them together row-by-row, applying the correct colors
   const combinedArt = supabaseLines
     .map((line, index) => {
       const coloredSupabase = chalk.hex("#3ecf8e")(line);
-      // We use toolsLines[index] || "" as a fallback just in case the heights ever mismatch
       const coloredTools = chalk.hex("#00311d")(toolsLines[index] || "");
 
-      // Combine the left and right sides with a space in between
-      return `${coloredSupabase} ${coloredTools}`;
+      return `${coloredSupabase}${coloredTools}`;
     })
     .join("\n");
 
-  // 3. Print the final result
   console.log(combinedArt);
   console.log("\n");
 
@@ -835,12 +825,14 @@ async function main() {
       {
         name: chalk.green("Backup"),
         value: "backup",
-        description: "Create a new schema + full SQL dump and save local metadata.",
+        description:
+          "Create a new schema + full SQL dump and save local metadata.",
       },
       {
         name: chalk.yellow("Restore"),
         value: "restore",
-        description: "Apply a local SQL backup to the selected target environment.",
+        description:
+          "Apply a local SQL backup to the selected target environment.",
       },
     ],
     theme: {
